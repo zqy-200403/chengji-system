@@ -231,7 +231,8 @@ st.sidebar.caption("© 2026 · 智慧校园 · AI 由智谱清言提供")
 # ============================================================
 if me["role"] == "主任":
     menu = st.sidebar.radio("功能菜单",
-        ["📚 班级管理", "👥 老师与权限", "🗓️ 考试管理", "📈 教学质量总览"])
+        ["📚 班级管理", "👥 老师与权限", "🗓️ 考试管理", "🔍 成绩对比", "📈 教学质量总览"])
+
     grade = st.sidebar.selectbox("选择年级", GRADES, key="d_grade")
 
     # ---------- 班级管理 ----------
@@ -409,6 +410,79 @@ if me["role"] == "主任":
                 save_exams(exams)
                 st.success(f"已创建考试【{n}】，等待各班班主任确认参加")
                 st.rerun()
+    # ---------- 成绩对比 ----------
+    elif menu == "🔍 成绩对比":
+        header("两次考试对比分析", f"{grade}年级")
+        ex_list = list_exams(grade)
+        if len(ex_list) < 2:
+            st.info("本年级还不足两次考试，无法对比。")
+            st.stop()
+        c1, c2 = st.columns(2)
+        exam_a = c1.selectbox("基准考试（上次）", ex_list, key="d_cmp_a")
+        exam_b = c2.selectbox("对比考试（本次）", [e for e in ex_list if e != exam_a],
+                              key="d_cmp_b")
+
+        def diff_txt(d):
+            if pd.isna(d):
+                return "-"
+            arrow = "🔺" if d > 0 else ("🔻" if d < 0 else "➖")
+            return f"{d:+.1f} {arrow}"
+
+        da = load_exam(grade, exam_a)
+        db = load_exam(grade, exam_b)
+        if da.empty or db.empty:
+            st.info("所选考试还没有成绩数据。")
+            st.stop()
+        for d in (da, db):
+            d["总分"] = d.apply(total_of, axis=1)
+
+        # ① 各班总分平均分对比
+        avg_a = da.groupby("班级")["总分"].mean()
+        avg_b = db.groupby("班级")["总分"].mean()
+        cls_cmp = pd.DataFrame({"上次均分": avg_a, "本次均分": avg_b})
+        cls_cmp["变化"] = cls_cmp["本次均分"] - cls_cmp["上次均分"]
+        cls_cmp = cls_cmp.sort_values("变化", ascending=False)
+        show = cls_cmp.copy()
+        show["变化"] = show["变化"].apply(diff_txt)
+        st.markdown(f"#### 🏫 各班总分平均分对比（{exam_a} → {exam_b}）")
+        st.table(show.round(1).fillna("-").astype(str))
+
+        # ② 各科各班平均分变化矩阵
+        st.markdown("#### 📚 各科平均分变化（行=班级，列=科目）")
+        chg = {}
+        for s in SUBJECTS:
+            chg[s] = (db.groupby("班级")[s].mean() - da.groupby("班级")[s].mean())
+        chg_df = pd.DataFrame(chg).dropna(how="all").round(1)
+        st.dataframe(chg_df, use_container_width=True)
+        st.caption("数值 = 本次平均分 − 上次平均分，正数为进步 🔺，负数为退步 🔻")
+
+        # ③ 年级个人进退步榜
+        mm = pd.merge(da[["班级", "姓名", "总分"]], db[["班级", "姓名", "总分"]],
+                      on=["班级", "姓名"], suffixes=("_上", "_本"))
+        mm["变化"] = mm["总分_本"] - mm["总分_上"]
+        mm = mm.dropna(subset=["变化"]).sort_values("变化", ascending=False)
+        if len(mm) > 0:
+            k1, k2 = st.columns(2)
+            with k1:
+                st.markdown("#### 🏆 进步榜（前10）")
+                top = mm.head(10).copy()
+                top["变化"] = top["变化"].apply(diff_txt)
+                st.table(top.astype(str))
+            with k2:
+                st.markdown("#### ⚠️ 退步预警（后10）")
+                bot = mm.tail(10).sort_values("变化").copy()
+                bot["变化"] = bot["变化"].apply(diff_txt)
+                st.table(bot.astype(str))
+
+        # ④ AI 年级对比报告
+        stat = (f"上次考试：{exam_a}；本次考试：{exam_b}\n"
+                f"各班总分对比：\n{cls_cmp.round(1).to_string()}\n\n"
+                f"各科各班平均分变化：\n{chg_df.to_string()}")
+        ai_section("生成年级进退步分析报告",
+                   f"你是学校教务主任。以下是年级两次考试（{exam_a} → {exam_b}）的对比数据，"
+                   f"请写一份300字左右的分析报告：年级整体走势、进步明显的班级与学科、"
+                   f"退步需重点关注的班级与学科、下阶段教学工作建议。\n\n{stat}",
+                   "AI 将生成年级层面的对比分析报告")
 
     # ---------- 教学质量总览 ----------
     else:
@@ -455,8 +529,9 @@ elif me["role"] == "老师":
         st.stop()
 
     is_ht = my_perms[my_perms["类型"] == "班主任"]
-    menu = st.sidebar.radio("功能菜单",
-        ["📝 成绩录入", "👥 学生管理", "🔑 修改密码"])
+        menu = st.sidebar.radio("功能菜单",
+            ["📝 成绩录入", "👥 学生管理", "📈 成绩对比", "🔑 修改密码"])
+
 
     # ---------- 修改密码 ----------
     if menu == "🔑 修改密码":
@@ -515,6 +590,79 @@ elif me["role"] == "老师":
                 st.rerun()
 
         st.divider()
+        st.markdown("#### 📥 批量导入花名册")
+        st.caption("支持：① 上传 CSV 文件（含「姓名」列，可有「密码」列）；② 从 Excel 直接复制粘贴名单")
+        st.download_button("📄 下载导入模板（CSV）",
+                           "姓名,密码\n张三,123456\n李四,123456\n".encode("utf-8-sig"),
+                           file_name="花名册导入模板.csv", key="imp_tpl")
+        up = st.file_uploader("方式一：上传 CSV 文件", type=["csv"], key="imp_up")
+        pasted = st.text_area("方式二：粘贴名单（每行一个姓名；单独设密码用：姓名,密码）",
+                              placeholder="张三\n李四\n王五,888888", key="imp_area")
+        default_pwd = st.text_input("未单独提供密码的学生，使用此默认密码",
+                                    value="123456", key="imp_pwd")
+        if st.button("📥 开始导入", type="primary"):
+            names = []
+            if up is not None:
+                try:
+                    imp = pd.read_csv(up, dtype=str, encoding="utf-8-sig")
+                except UnicodeDecodeError:
+                    up.seek(0)
+                    imp = pd.read_csv(up, dtype=str, encoding="gbk")
+                imp.columns = [str(c).strip() for c in imp.columns]
+                if "姓名" not in imp.columns and len(imp.columns) == 1:
+                    imp.columns = ["姓名"]
+                if "姓名" in imp.columns:
+                    pw_list = (imp["密码"].astype(str) if "密码" in imp.columns
+                               else pd.Series([""] * len(imp)))
+                    for nm, pw in zip(imp["姓名"].astype(str), pw_list):
+                        names.append((nm.strip(), "" if pw in ("nan", "None") else pw.strip()))
+                else:
+                    st.error("CSV 中未找到「姓名」列，请参考模板。")
+            for line in (pasted or "").splitlines():
+                line = line.strip().replace("\u3000", " ")
+                if not line:
+                    continue
+                if "\t" in line:
+                    parts = line.split("\t")
+                elif "," in line:
+                    parts = line.split(",", 1)
+                elif " " in line:
+                    parts = line.split(None, 1)
+                else:
+                    parts = [line]
+                names.append((parts[0].strip(),
+                              parts[1].strip() if len(parts) > 1 else ""))
+            acc = load_accounts()
+            added, skipped, seen = [], [], set()
+            for nm, pw in names:
+                if not nm or nm.lower() == "nan" or nm == "姓名":
+                    continue
+                if nm in seen:
+                    skipped.append(f"{nm}（名单内重复）")
+                    continue
+                seen.add(nm)
+                if ((acc["角色"] == "学生") & (acc["年级"] == grade)
+                        & (acc["班级"] == cls) & (acc["姓名"] == nm)).any():
+                    skipped.append(f"{nm}（本班已有）")
+                    continue
+                acc = pd.concat([acc, pd.DataFrame(
+                    [{"姓名": nm, "密码": pw or default_pwd, "角色": "学生",
+                      "年级": grade, "班级": cls}])], ignore_index=True)
+                added.append(nm)
+            if added:
+                save_accounts(acc)
+            st.session_state["imp_result"] = (added, skipped)
+            st.rerun()
+        if "imp_result" in st.session_state:
+            added, skipped = st.session_state.pop("imp_result")
+            if added:
+                st.success(f"✅ 成功导入 {len(added)} 人：{'、'.join(added)}")
+                st.caption("提示：新学生如需计入当前考试，请到「成绩录入」再点一次「✅ 本班参加本次考试」补入。")
+            if skipped:
+                st.warning(f"⚠️ 跳过 {len(skipped)} 人：{'、'.join(skipped)}")
+            if not added and not skipped:
+                st.info("未识别到有效姓名，请检查格式。")
+
         st.markdown("#### 🔑 重置学生密码 / 🗑️ 移除学生")
         c1, c2 = st.columns(2)
         with c1:
@@ -543,6 +691,104 @@ elif me["role"] == "老师":
                     st.rerun()
                 else:
                     st.error("未找到该学生！")
+
+    # ---------- 成绩对比 ----------
+    elif menu == "📈 成绩对比":
+        choices = []
+        for _, p in my_perms.iterrows():
+            if p["类型"] == "班主任":
+                choices.append((p["年级"], p["班级"], "全部科目", p))
+            else:
+                choices.append((p["年级"], p["班级"], p["科目"], p))
+        opts = [f"{g}{c} · {s}" for g, c, s, _ in choices]
+        pick = st.sidebar.selectbox("选择对比任务", opts, key="cmp_pick")
+        grade, cls, subject, p_row = choices[opts.index(pick)]
+
+        header("成绩对比", f"{grade}{cls} · {subject}")
+        ex_list = list_exams(grade)
+        if len(ex_list) < 2:
+            st.info("本年级还不足两次考试，无法对比。")
+            st.stop()
+        c1, c2 = st.columns(2)
+        exam_a = c1.selectbox("基准考试（上次）", ex_list, key=f"cmp_a_{grade}_{cls}")
+        exam_b = c2.selectbox("对比考试（本次）", [e for e in ex_list if e != exam_a],
+                              key=f"cmp_b_{grade}_{cls}")
+
+        def diff_txt(d):
+            if pd.isna(d):
+                return "-"
+            arrow = "🔺" if d > 0 else ("🔻" if d < 0 else "➖")
+            return f"{d:+.0f} {arrow}"
+
+        df_a = load_exam(grade, exam_a)
+        df_b = load_exam(grade, exam_b)
+        df_a["总分"] = df_a.apply(total_of, axis=1)
+        df_b["总分"] = df_b.apply(total_of, axis=1)
+        a_cls = df_a[df_a["班级"] == cls].set_index("姓名")
+        b_cls = df_b[df_b["班级"] == cls].set_index("姓名")
+
+        common = [n for n in b_cls.index if n in a_cls.index]
+        missing = [n for n in b_cls.index if n not in a_cls.index]
+        if missing:
+            st.warning(f"以下学生在【{exam_a}】中无成绩，未参与对比：{'、'.join(missing)}")
+        if not common:
+            st.info("两次考试没有共同学生，无法对比。")
+            st.stop()
+
+        use_cols = (SUBJECTS if subject == "全部科目" else [subject]) \
+                   + (["总分"] if subject == "全部科目" else [])
+        rows = []
+        for n in common:
+            row = {"姓名": n}
+            for s in use_cols:
+                va = pd.to_numeric(a_cls.loc[n, s], errors="coerce")
+                vb = pd.to_numeric(b_cls.loc[n, s], errors="coerce")
+                row[f"{s}_上"] = va
+                row[f"{s}_本"] = vb
+                row[f"{s}_变"] = vb - va if (pd.notna(va) and pd.notna(vb)) else np.nan
+            rows.append(row)
+        cmp_df = pd.DataFrame(rows).set_index("姓名")
+
+        main_s = "总分" if "总分" in use_cols else subject
+        rank = cmp_df.sort_values(f"{main_s}_变", ascending=False)
+        show = pd.DataFrame({
+            f"上次{main_s}": rank[f"{main_s}_上"],
+            f"本次{main_s}": rank[f"{main_s}_本"],
+            "变化": rank[f"{main_s}_变"].apply(diff_txt),
+        }).fillna("-")
+        st.markdown(f"#### 📊 每人「{main_s}」变化（进步→退步排序）")
+        st.table(show.astype(str))
+
+        chg = cmp_df[f"{main_s}_变"]
+        avg_diff, up_n, down_n = chg.mean(), (chg > 0).sum(), (chg < 0).sum()
+        m1, m2, m3 = st.columns(3)
+        m1.metric("📈 平均分变化", diff_txt(avg_diff))
+        m2.metric("🔺 进步人数", f"{up_n} 人")
+        m3.metric("🔻 退步人数", f"{down_n} 人")
+
+        if subject == "全部科目":
+            st.divider()
+            sub_v = st.selectbox("查看单科变化明细", SUBJECTS, key=f"cmp_s_{grade}_{cls}")
+            det = cmp_df.sort_values(f"{sub_v}_变", ascending=False)
+            show2 = pd.DataFrame({
+                f"上次{sub_v}": det[f"{sub_v}_上"],
+                f"本次{sub_v}": det[f"{sub_v}_本"],
+                "变化": det[f"{sub_v}_变"].apply(diff_txt),
+            }).fillna("-")
+            st.markdown(f"#### 📚 「{sub_v}」变化明细")
+            st.table(show2.astype(str))
+
+        if p_row["类型"] == "班主任":
+            stat = (f"班级：{grade}{cls}；上次考试：{exam_a}；本次考试：{exam_b}\n"
+                    f"{main_s}平均分变化：{diff_txt(avg_diff)}；进步 {up_n} 人，退步 {down_n} 人\n"
+                    f"每人变化明细：\n{show.to_string()}")
+            ai_section("生成两次考试对比分析",
+                       f"你是一位班主任。以下是班级两次考试（{exam_a} → {exam_b}）的对比数据，"
+                       f"请写一段200字左右的分析：整体进退步情况、值得表扬的进步方面、"
+                       f"需要关注的群体（不点名批评单个学生），并给家长和科任老师各1条建议。"
+                       f"\n\n{stat}",
+                       "AI 将对比两次考试，生成班级进退步分析")
+
 
     # ---------- 成绩录入 ----------
     else:

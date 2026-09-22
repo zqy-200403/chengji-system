@@ -372,6 +372,29 @@ if me["role"] == "主任":
             st.info(f"{grade}年级还没有考试。")
 
         st.divider()
+        st.markdown("#### 🗑️ 删除考试")
+        if len(g_exams) > 0:
+            c1, c2 = st.columns([3, 1])
+            del_exam = c1.selectbox("选择要删除的考试",
+                                    g_exams["考试"].tolist(), key="del_exam")
+            with c2:
+                st.write("")  # 对齐
+                confirm = st.checkbox("我确认删除", key="del_confirm")
+            if st.button("删除该考试（连同所有成绩）", type="primary"):
+                if not confirm:
+                    st.warning("请先勾选「我确认删除」！")
+                else:
+                    exams = exams[~((exams["年级"] == grade) & (exams["考试"] == del_exam))]
+                    save_exams(exams)
+                    f = exam_file(grade, del_exam)
+                    if os.path.exists(f):
+                        os.remove(f)
+                    st.success(f"已删除考试【{del_exam}】及其全部成绩")
+                    st.rerun()
+        else:
+            st.caption("暂无考试可删除。")
+
+        st.divider()
         st.markdown("#### ➕ 创建考试（仅主任可创建）")
         n_exam = st.text_input("考试名称（如：2026期中）", key="n_exam")
         if st.button("创建考试", type="primary"):

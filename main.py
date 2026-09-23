@@ -139,8 +139,9 @@ def join_exam(grade, exam, cls):
             new_rows.append({"班级": cls, "姓名": s["姓名"],
                              **{sub: np.nan for sub in SUBJECTS}})
     if new_rows:
-        df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-        df.to_csv(exam_file(grade, exam))
+            df = df.loc[:, ~df.columns.duplicated()]   # 去掉重复列
+            df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+            df.to_csv(exam_file(grade, exam))
     # 记录参加班级
     exams = load_exams()
     m = (exams["年级"] == grade) & (exams["考试"] == exam)

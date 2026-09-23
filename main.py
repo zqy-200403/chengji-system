@@ -7,9 +7,9 @@ import os
 st.set_page_config(page_title="十八中附小智慧成绩管理平台", layout="wide", page_icon="🏫")
 
 MAIN = ["语文", "数学", "英语"]
-ELEC = ["道德与法治", "科学", "体育", "音乐",  "体育"]
+ELEC = ["道德与法治", "科学", "体育", "音乐", "美术"]   # ★修复：原来"体育"重复了两次
 SUBJECTS = MAIN + ELEC
-MAX_SCORE =  {s: 100 for s in ELEC}
+MAX_SCORE = {s: 100 for s in SUBJECTS}   # ★修复：原来只给副科配了满分，主科查满分就 KeyError
 GRADES = ["一年级", "二年级", "三年级", "四年级", "五年级", "六年级"]
 CLASSES = ["1班", "2班", "3班", "4班", "5班", "6班", "7班", "8班"]
 DIRECTOR_PWD = "admin888"   # 主任总密码，可修改
@@ -39,7 +39,7 @@ def header(title, sub=""):
                 border-left:8px solid #c9a227;margin-bottom:1.2rem;
                 box-shadow:0 2px 8px rgba(0,0,0,0.15);'>
         <h2 style='margin:0;letter-spacing:2px;font-size:1.5rem;'>🏫 {title}</h2>
-        {f"<p style='margin:0.3rem 0 0;opacity:0.85;font-size:0.9rem;'>{sub}</p >" if sub else ""}
+        {f"<p style='margin:0.3rem 0 0;opacity:0.85;font-size:0.9rem;'>{sub}</p>" if sub else ""}
     </div>""", unsafe_allow_html=True)
 
 def card(body, border="#1a3a6b"):
@@ -73,7 +73,7 @@ def ai_section(title, prompt, placeholder="AI 分析"):
         with st.spinner("AI 正在分析…"):
             try:
                 text = ai_chat(prompt)
-                card(f"<p style='white-space:pre-wrap;line-height:1.8;'>{text}</p >",
+                card(f"<p style='white-space:pre-wrap;line-height:1.8;'>{text}</p>",
                      border="#c9a227")
             except Exception as e:
                 st.error(f"AI 调用失败：{e}")
@@ -107,13 +107,24 @@ def exam_file(grade, exam):
     return os.path.join(grade_dir(grade), f"{exam}.csv")
 
 def load_exam(grade, exam):
+    """★修复：读取考试CSV时自动去重列、补齐科目列、成绩转为数字，兼容旧脏数据"""
     f = exam_file(grade, exam)
     if os.path.exists(f):
         df = pd.read_csv(f, index_col=0)
+        df.columns = [str(c).strip() for c in df.columns]
+        df = df.loc[:, ~df.columns.duplicated()]          # 去掉重复列
         for c in ("班级", "姓名"):
+            if c not in df.columns:
+                df[c] = ""
             df[c] = (df[c].fillna("").astype(str)
                          .str.replace("\u3000", " ", regex=False).str.strip())
-        return df[df["姓名"] != ""].copy()
+        df = df[df["姓名"] != ""].copy()
+        for c in SUBJECTS:                                 # 科目列齐全且为数字
+            if c not in df.columns:
+                df[c] = np.nan
+            else:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+        return df
     return pd.DataFrame(columns=["班级", "姓名"] + SUBJECTS)
 
 def list_exams(grade):
@@ -139,9 +150,8 @@ def join_exam(grade, exam, cls):
             new_rows.append({"班级": cls, "姓名": s["姓名"],
                              **{sub: np.nan for sub in SUBJECTS}})
     if new_rows:
-            df = df.loc[:, ~df.columns.duplicated()]   # 去掉重复列
-            df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-            df.to_csv(exam_file(grade, exam))
+        df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+        df.to_csv(exam_file(grade, exam))
     # 记录参加班级
     exams = load_exams()
     m = (exams["年级"] == grade) & (exams["考试"] == exam)
@@ -152,7 +162,7 @@ def join_exam(grade, exam, cls):
         save_exams(exams)
 
 def promote_class(grade, cls):
-    """整班升学：初二→初三，初三→高一，高三→毕业（移出）"""
+    """整班升学：升入下一学年年级，六年级毕业（移出）"""
     idx = GRADES.index(grade)
     acc = load_accounts()
     m = (acc["角色"] == "学生") & (acc["年级"] == grade) & (acc["班级"] == cls)
@@ -165,7 +175,7 @@ def promote_class(grade, cls):
         mp = (perm["年级"] == grade) & (perm["班级"] == cls)
         perm.loc[mp, "年级"] = GRADES[idx + 1]
         save_classes(cls_df); save_perms(perm)
-    else:  # 高三毕业：学生账号保留但标记为已毕业
+    else:  # 六年级毕业：学生账号保留但标记为已毕业
         acc.loc[m, "年级"] = "已毕业"
     save_accounts(acc)
 
@@ -238,7 +248,7 @@ if me["role"] == "主任":
 
     # ---------- 班级管理 ----------
     if menu == "📚 班级管理":
-        header("班级管理", f"{grade}年级")
+        header("班级管理", f"{grade}")
         cls_df = load_classes()
         g_cls = cls_df[cls_df["年级"] == grade]
 
@@ -246,7 +256,7 @@ if me["role"] == "主任":
             st.markdown("#### 当前班级")
             st.table(g_cls[["班级", "班主任"]].reset_index(drop=True))
         else:
-            st.info(f"{grade}年级还没有班级。")
+            st.info(f"{grade}还没有班级。")
 
         st.divider()
         st.markdown("#### ➕ 创建班级 / 设置班主任")
@@ -271,7 +281,7 @@ if me["role"] == "主任":
 
         st.divider()
         st.markdown("#### 🎓 学生整班升学")
-        st.caption("将整班学生、班主任、老师权限一起升入下一学年年级（初三→高一，高三→已毕业）")
+        st.caption("将整班学生、班主任、老师权限一起升入下一学年年级（五年级→六年级，六年级→已毕业）")
         c1, c2 = st.columns(2)
         p_cls = c1.selectbox("要升学的班级",
                              g_cls["班级"].tolist() if len(g_cls) else [], key="p_cls")
@@ -361,7 +371,7 @@ if me["role"] == "主任":
 
     # ---------- 考试管理 ----------
     elif menu == "🗓️ 考试管理":
-        header("考试管理", f"{grade}年级")
+        header("考试管理", grade)
         exams = load_exams()
         g_exams = exams[exams["年级"] == grade]
 
@@ -371,7 +381,7 @@ if me["role"] == "主任":
                 joined = [x for x in e["参加班级"].split("|") if x]
                 card(f"<b>📝 {e['考试']}</b>　已参加班级：{('、'.join(joined)) if joined else '暂无'}")
         else:
-            st.info(f"{grade}年级还没有考试。")
+            st.info(f"{grade}还没有考试。")
 
         st.divider()
         st.markdown("#### 🗑️ 删除考试")
@@ -413,7 +423,7 @@ if me["role"] == "主任":
                 st.rerun()
     # ---------- 成绩对比 ----------
     elif menu == "🔍 成绩对比":
-        header("两次考试对比分析", f"{grade}年级")
+        header("两次考试对比分析", grade)
         ex_list = list_exams(grade)
         if len(ex_list) < 2:
             st.info("本年级还不足两次考试，无法对比。")
@@ -487,7 +497,7 @@ if me["role"] == "主任":
 
     # ---------- 教学质量总览 ----------
     else:
-        header("教学质量总览", f"{grade}年级")
+        header("教学质量总览", grade)
         ex_list = list_exams(grade)
         if not ex_list:
             st.info("本年级还没有考试数据。")
@@ -533,7 +543,6 @@ elif me["role"] == "老师":
     menu = st.sidebar.radio("功能菜单",
                             ["📝 成绩录入", "👥 学生管理", "📈 成绩对比", "🔑 修改密码"])
 
-
     # ---------- 修改密码 ----------
     if menu == "🔑 修改密码":
         header("修改密码", t_name)
@@ -557,7 +566,6 @@ elif me["role"] == "老师":
             st.stop()
         opts = [f"{r['年级']}{r['班级']}" for _, r in is_ht.iterrows()]
         pick = st.sidebar.selectbox("选择你管的班级", opts)
-        # 解析
         ht_row = is_ht.iloc[opts.index(pick)]
         grade, cls = ht_row["年级"], ht_row["班级"]
         header("学生管理（花名册）", f"{grade}{cls}")
@@ -723,6 +731,9 @@ elif me["role"] == "老师":
 
         df_a = load_exam(grade, exam_a)
         df_b = load_exam(grade, exam_b)
+        if df_a.empty or df_b.empty:
+            st.info("所选考试还没有成绩数据。")
+            st.stop()
         df_a["总分"] = df_a.apply(total_of, axis=1)
         df_b["总分"] = df_b.apply(total_of, axis=1)
         a_cls = df_a[df_a["班级"] == cls].set_index("姓名")
@@ -790,10 +801,8 @@ elif me["role"] == "老师":
                        f"\n\n{stat}",
                        "AI 将对比两次考试，生成班级进退步分析")
 
-
     # ---------- 成绩录入 ----------
     else:
-        # 可录入范围 = 班主任的全部科目 + 任课授权
         choices = []
         for _, p in my_perms.iterrows():
             if p["类型"] == "班主任":
@@ -806,7 +815,8 @@ elif me["role"] == "老师":
 
         header("成绩录入", f"{grade}{cls} · {subject}")
         exams = load_exams()
-        g_exams = exams[(exams["年级"] == grade)]["考试"].tolist()
+        g_exams = list(dict.fromkeys(
+            exams[exams["年级"] == grade]["考试"].tolist()))   # ★修复：考试去重
         if not g_exams:
             st.info("本年级还没有考试，请等待主任创建。")
             st.stop()
@@ -816,7 +826,9 @@ elif me["role"] == "老师":
         if p_row["类型"] == "班主任":
             exams_df = load_exams()
             m = (exams_df["年级"] == grade) & (exams_df["考试"] == exam)
-            joined = set(filter(None, exams_df.loc[m, "参加班级"].iloc[0].split("|")))
+            joined = set()
+            if m.any():   # ★修复：考试记录缺失时不再报错
+                joined = set(filter(None, exams_df.loc[m, "参加班级"].iloc[0].split("|")))
             if cls in joined:
                 st.success(f"✅ 本班已参加【{exam}】")
             else:
@@ -834,10 +846,8 @@ elif me["role"] == "老师":
             st.info("本班还没有该考试的成绩记录（班主任需先确认参加考试）。")
             st.stop()
 
-        subj_list = SUBJECTS if subject == "全部科目" else [subject]
-        subject = st.selectbox("录入科目", subj_list,
-                               index=0, key=f"sub_{grade}_{cls}_{exam}") \
-                   if subject == "全部科目" else subject
+        if subject == "全部科目":
+            subject = st.selectbox("录入科目", SUBJECTS, key=f"sub_{grade}_{cls}_{exam}")
 
         st.markdown(f"#### {grade}{cls}「{subject}」成绩（满分 {MAX_SCORE[subject]}）")
         new_scores = {}
@@ -939,7 +949,9 @@ else:
     st.table(pd.DataFrame(rows).astype(str))
 
     st.markdown("#### 🤖 AI 学习诊断")
-    valid = [x for x in rows if isinstance(x["分数"], (int, float, np.floating))]
+    valid = [x for x in rows
+             if isinstance(x["分数"], (int, float, np.integer, np.floating))
+             and not pd.isna(x["分数"])]   # ★修复：兼容整数型分数
     if not valid:
         st.info("成绩还没录完，AI 暂时无法分析。")
     else:

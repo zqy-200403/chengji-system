@@ -4,13 +4,13 @@ import numpy as np
 import os
 
 # ================= 基础配置 =================
-st.set_page_config(page_title="智慧成绩管理平台", layout="wide", page_icon="🏫")
+st.set_page_config(page_title="十八中附小智慧成绩管理平台", layout="wide", page_icon="🏫")
 
 MAIN = ["语文", "数学", "英语"]
-ELEC = ["物理", "化学", "生物", "历史", "地理", "政治"]
+ELEC = ["道德与法治", "科学", "体育", "音乐",  "体育"]
 SUBJECTS = MAIN + ELEC
-MAX_SCORE = {s: 150 for s in MAIN} | {s: 100 for s in ELEC}
-GRADES = ["初一", "初二", "初三", "高一", "高二", "高三"]
+MAX_SCORE =  {s: 100 for s in ELEC}
+GRADES = ["一年级", "二年级", "三年级", "四年级", "五年级", "六年级"]
 CLASSES = ["1班", "2班", "3班", "4班", "5班", "6班", "7班", "8班"]
 DIRECTOR_PWD = "admin888"   # 主任总密码，可修改
 DATA_DIR = "成绩数据"
@@ -173,7 +173,7 @@ if "logged" not in st.session_state:
     st.session_state.logged = None
 
 if st.session_state.logged is None:
-    header("智慧成绩管理平台", "请选择身份登录")
+    header("十八中附小智慧成绩管理平台", "请选择身份登录")
     tab_s, tab_t, tab_d = st.tabs(["🎓 学生登录", "👨‍🏫 老师登录", "📋 主任登录"])
 
     with tab_s:
@@ -218,7 +218,7 @@ if st.session_state.logged is None:
 
 # ================= 已登录 =================
 me = st.session_state.logged
-st.sidebar.markdown("### 🏫 智慧成绩管理平台")
+st.sidebar.markdown("### 🏫 十八中附小智慧成绩管理平台")
 st.sidebar.success(f"{me['role']}：{me['name']}")
 if st.sidebar.button("🚪 退出登录"):
     st.session_state.logged = None
